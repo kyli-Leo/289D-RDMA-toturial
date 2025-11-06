@@ -11,25 +11,6 @@ It enables:
 
 Only registered memory can be used in RDMA operations.
 
-> **Memory Keys**
-
-| Key  | Scope  | Purpose                                            |
-|------|--------|----------------------------------------------------|
-| lkey | Local  | Required in SGEs for DMA by local NIC              |
-| rkey | Remote | Required for RDMA Read/Write/Atomic by remote peer |
-
-
-> **Access Flags**
-
-| Flag            | Meaning                   |
-|-----------------|---------------------------|
-| `LOCAL_WRITE`   | Local NIC may write to MR |
-| `REMOTE_WRITE`  | Remote RDMA Write allowed |
-| `REMOTE_READ`   | Remote RDMA Read allowed  |
-| `REMOTE_ATOMIC` | Atomic ops allowed        |
-
-
-
 
 ## 2. Why Register Memory?
 
@@ -60,3 +41,21 @@ mr = ibv_reg_mr(pd, addr, length, access_flags);
 /* ... */
 ibv_dereg_mr(mr);
 ```
+
+## Some concepts
+> **Memory Keys**
+
+| Key  | Scope  | Purpose                                            |
+|------|--------|----------------------------------------------------|
+| lkey | Local  | Required in SGEs for DMA by local NIC              |
+| rkey | Remote | Required for RDMA Read/Write/Atomic by remote peer |
+
+
+> **Access Flags**
+
+| Flag            | Meaning                   |
+|-----------------|---------------------------|
+| `LOCAL_WRITE`   | Local NIC may write to MR |
+| `REMOTE_WRITE`  | Remote RDMA Write allowed |
+| `REMOTE_READ`   | Remote RDMA Read allowed  |
+| `REMOTE_ATOMIC` | Atomic ops allowed        |
