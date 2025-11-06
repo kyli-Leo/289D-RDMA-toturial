@@ -1,1 +1,253 @@
 # RDMA Verbs API
+
+
+## libibverbs
+
+reference:http://rdmamojo.com/2012/05/18/libibverbs/
+
+libibverbs is a library that enables userspace programs to utilize RDMA "verbs" as defined by the RDMA Protocol Verbs Specification and the InfiniBand Architecture Specification. The (hardware agnostic) verbs abstraction for RDMA in software is implemented via it. For fast route operations, this involves direct hardware access (kernel bypass) from userspace to InfiniBand/iWARP adapters.
+Installing this library is essential because the majority of RDMA programs are built using it.
+
+To use the library, the code needs to include 
+
+    #include <infiniband/verbs.h>
+
+I will introduce every part of functions first, then I will show a example to the process of realizing RDMA.
+### Libraray function
+In libibverbs, the use of **fork()**  is a rather risky operation because InfiniBand resources (such as queue pairs QP, completion queues CQ, protection domains PD, memory registrations MR, etc.) are usually directly managed by the kernel driver, and the states of these resources are closely associated with the process address space. Once a process calls fork(), these kernel resources will not be duplicated, but the user-space handles (such as struct ibv_context *) will be copied to the child process, leading to serious inconsistencies and potential crashes.
+
+    int ibv_fork_init(void);
+
+This function is used to initialize libibverbs' support for fork before calling fork(). ibv_fork_init() must be called before creating any RDMA resources. Once memory is registered or QP/CQ is created, calling it again will be invalid.
+### Device functions
+
+| Function                                                      | Description                                                                                                                     | Parameters                                                                                           | Return Value                                                                 | Typical Usage                                     |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------- |
+| `struct ibv_device **ibv_get_device_list(int *num_devices);`  | Retrieves the list of available **InfiniBand / RDMA devices** in the system. The list is terminated by `NULL`.                  | `num_devices`: Pointer to an integer that will store the number of detected devices (can be `NULL`). | Returns a pointer to an array of device pointers; returns `NULL` on failure. | Enumerate all RDMA devices and print their names. |
+| `void ibv_free_device_list(struct ibv_device **list);`        | **Frees the memory** allocated for the device list returned by `ibv_get_device_list()`. Does not affect the devices themselves. | `list`: The device list returned by `ibv_get_device_list()`.                                         | None (void).                                                                 | Free resources after enumerating devices.         |
+| `const char *ibv_get_device_name(struct ibv_device *device);` | Returns a **human-readable name** for the device (e.g., `"mlx5_0"`).                                                            | `device`: Pointer to an `ibv_device` structure.                                                      | Returns a static string; **do not free** it manually.                        | Display or log the device name.                   |
+| `uint64_t ibv_get_device_guid(struct ibv_device *device);`    | Returns the device’s **Globally Unique Identifier (GUID)** used to distinguish hardware adapters.                               | `device`: Pointer to an `ibv_device` structure.                                                      | Returns a 64-bit integer (GUID).                                             | Identify or differentiate between HCA devices.    |
+### Context function
+| Function                                                          | Description                                                                                                                                                        | Parameters                                                      | Return Value                                                                  | Typical Usage                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `struct ibv_context *ibv_open_device(struct ibv_device *device);` | Opens the specified **InfiniBand / RDMA device** and returns a context used for communication with the kernel driver. This establishes the user–kernel connection. | `device`: A device pointer returned by `ibv_get_device_list()`. | On success, returns a pointer to an `ibv_context`; returns `NULL` on failure. | Open an RDMA device before creating PDs, CQs, or QPs. |
+| `int ibv_close_device(struct ibv_context *context);`              | Closes the previously opened device context and releases its associated kernel resources.                                                                          | `context`: The context pointer returned by `ibv_open_device()`. | Returns `0` on success, negative value on failure.                            | Cleanly release RDMA resources and close the device.  |
+
+
+### Query
+
+| Function                                                                                              | Description                                                                                                         | Parameters                                                                                                     | Return Value                                       | Typical Usage                                                         |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------- |
+| `int ibv_query_device(struct ibv_context *context, struct ibv_device_attr *device_attr);`             | Queries the device’s **hardware capabilities** such as maximum QPs, CQs, and registered memory regions.             | `context`: Device context. <br>`device_attr`: Pointer to a structure that stores the queried attributes.       | Returns `0` on success, negative value on failure. | Retrieve general device capability information for resource planning. |
+| `int ibv_query_port(struct ibv_context *context, uint8_t port_num, struct ibv_port_attr *port_attr);` | Queries a specific port for **status and attributes** (e.g., port state, LID, MTU, GID table size, and link speed). | `context`: Device context.<br>`port_num`: Port number (starting from 1).<br>`port_attr`: Output structure.     | Returns `0` on success, negative value on failure. | Check if the port is active and obtain its LID/GID parameters.        |
+| `int ibv_query_pkey(struct ibv_context *context, uint8_t port_num, int index, uint16_t *pkey);`       | Queries the **Partition Key (P_Key)** at a given index on a specific port.                                          | `context`: Device context.<br>`port_num`: Port number.<br>`index`: P_Key table index.<br>`pkey`: Output value. | Returns `0` on success, negative value on failure. | Retrieve the P_Key for partitioned fabric control.                    |
+| `int ibv_query_gid(struct ibv_context *context, uint8_t port_num, int index, union ibv_gid *gid);`    | Queries the **Global Identifier (GID)** entry for a given port and index.                                           | `context`: Device context.<br>`port_num`: Port number.<br>`index`: GID table index.<br>`gid`: Output union.    | Returns `0` on success, negative value on failure. | Obtain the GID used in RDMA connection setup (e.g., RoCE, IB).        |
+
+### Asynchronous events
+| Function                                                                               | Description                                                                                                                                                                                          | Parameters                                                                                                                   | Return Value                                       | Typical Usage                                                                 |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `int ibv_get_async_event(struct ibv_context *context, struct ibv_async_event *event);` | Blocks (or polls) to retrieve an **asynchronous event** from the device, such as QP errors, port state changes, CQ overflows, or other status updates.                                               | `context`: Device context.<br>`event`: Pointer to an `ibv_async_event` structure that will be filled with event information. | Returns `0` on success, negative value on failure. | Used to monitor RDMA device or resource state changes and detect errors.      |
+| `void ibv_ack_async_event(struct ibv_async_event *event);`                             | **Acknowledges and releases** the asynchronous event previously obtained by `ibv_get_async_event()`. Each event **must be acknowledged exactly once** to prevent event queue overflow in the kernel. | `event`: Pointer to the event structure obtained from `ibv_get_async_event()`.                                               | None (void).                                       | Call after handling an event to inform the driver that it has been processed. |
+
+### Protection Domains
+| Function                                                    | Description                                                                                                                                                                               | Parameters                                                     | Return Value                                                              | Typical Usage                                    |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------ |
+| `struct ibv_pd *ibv_alloc_pd(struct ibv_context *context);` | Allocates a **Protection Domain (PD)** for the specified device. A PD isolates RDMA resources (QPs, MRs, CQs, etc.) to prevent unauthorized cross-access between applications or threads. | `context`: The device context returned by `ibv_open_device()`. | Returns a pointer to an `ibv_pd` structure on success; `NULL` on failure. | Must be called before creating QPs, MRs, or AHs. |
+| `int ibv_dealloc_pd(struct ibv_pd *pd);`                    | Deallocates the previously allocated PD and releases its kernel resources. All resources associated with the PD (e.g., QPs, MRs) must be destroyed first.                                 | `pd`: Pointer returned by `ibv_alloc_pd()`.                    | Returns `0` on success, negative value on failure.                        | Called during cleanup to release the PD safely.  |
+
+### Memory Regions
+| Function                                                                               | Description                                                                                                                                                                        | Parameters                                                                                                                                                                                                                   | Return Value                                                    | Typical Usage                                                 |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| `struct ibv_mr *ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, int access);` | Registers a user-space memory region with the **RDMA device**, allowing it to be accessed directly via RDMA operations (Read/Write/Send). Returns a **Memory Region (MR)** handle. | `pd`: Protection Domain.<br>`addr`: Starting address of the memory buffer.<br>`length`: Size of the region.<br>`access`: Access flags (e.g., `IBV_ACCESS_LOCAL_WRITE`, `IBV_ACCESS_REMOTE_READ`, `IBV_ACCESS_REMOTE_WRITE`). | Returns a pointer to an `ibv_mr` on success, `NULL` on failure. | Enables RDMA-capable memory before initiating data transfers. |
+| `int ibv_dereg_mr(struct ibv_mr *mr);`                                                 | Deregisters a previously registered memory region and releases its DMA mapping and kernel resources.                                                                               | `mr`: The memory region handle returned by `ibv_reg_mr()`.                                                                                                                                                                   | Returns `0` on success, negative value on failure.              | Called during cleanup when RDMA memory is no longer needed.   |
+
+### Address Handles
+
+| Function                                                                                                                                       | Description                                                                                                                                                  | Parameters                                                                                                                       | Return Value                                      | Typical Usage / Notes                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `struct ibv_ah *ibv_create_ah(struct ibv_pd *pd, struct ibv_ah_attr *attr);`                                                                   | Creates an **Address Handle (AH)** in a given **Protection Domain (PD)** for **UD QPs**, encapsulating path info (LID/GID, SL, port, GRH fields, etc.).      | `pd`: Protection Domain;<br>`attr`: AH attributes (`dlid`, `is_global`, `grh`, `port_num`, `sl`, `src_path_bits`, …).            | On success, returns `ibv_ah*`; `NULL` on failure. | Prepare routing before UD sends; **the AH’s PD must match the sender QP’s PD**.                                                |
+| `int ibv_init_ah_from_wc(struct ibv_context *context, uint8_t port_num, struct ibv_wc *wc, struct ibv_grh *grh, struct ibv_ah_attr *ah_attr);` | Populates `ah_attr` from a **receive Work Completion (WC)** and its **GRH**, without creating the AH. Useful for replying to the sender along the same path. | `context`: Device context; `port_num`: Local port; `wc`: Received completion; `grh`: Packet’s GRH; `ah_attr`: Output attributes. | Returns `0` on success; negative on failure.      | Extract path parameters (GID, traffic class, hop limit, etc. for RoCE/IB), then call `ibv_create_ah()` to build a reusable AH. |
+| `struct ibv_ah *ibv_create_ah_from_wc(struct ibv_pd *pd, struct ibv_wc *wc, struct ibv_grh *grh, uint8_t port_num);`                           | Convenience wrapper: effectively `ibv_init_ah_from_wc()` + `ibv_create_ah()` in one call.                                                                    | `pd`: Protection Domain; `wc`/`grh`: From the received packet; `port_num`: Local port.                                           | Returns `ibv_ah*` on success; `NULL` on failure.  | Quickest way to build a “reply AH”; ideal for immediate one-off replies.                                                       |
+| `int ibv_destroy_ah(struct ibv_ah *ah);`                                                                                                       | Destroys an AH and frees its resources.                                                                                                                      | `ah`: Handle returned by `ibv_create_ah*`.                                                                                       | Returns `0` on success; negative on failure.      | Cleanup; **ensure no in-flight WQEs still reference the AH**.                                                                  |
+
+### Completion event channels
+| Function                                                                         | Description                                                                                                                                                                                                                                  | Parameters                                                  | Return Value                                                           | Typical Usage / Notes                                       |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `struct ibv_comp_channel *ibv_create_comp_channel(struct ibv_context *context);` | Creates a **Completion Channel**, which allows **CQ (Completion Queue)** event notifications to be handled asynchronously. Applications can use `poll()`, `select()`, or `epoll()` on the channel’s file descriptor instead of busy polling. | `context`: Device context returned by `ibv_open_device()`.  | Returns a pointer to `ibv_comp_channel` on success; `NULL` on failure. | Used for event-driven CQ notifications to reduce CPU usage. |
+| `int ibv_destroy_comp_channel(struct ibv_comp_channel *channel);`                | Destroys a previously created Completion Channel and releases associated resources. All CQs attached to it must be destroyed first.                                                                                                          | `channel`: Pointer returned by `ibv_create_comp_channel()`. | Returns `0` on success; negative value on failure.                     | Called during cleanup when no CQs remain on the channel.    |
+
+### Completion Queues control
+| Function                                                                                                                                   | Description                                                                                                                                                                         | Parameters                                                                                                                                                                                                                          | Return Value                                       | Typical Usage / Notes                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `struct ibv_cq *ibv_create_cq(struct ibv_context *context, int cqe, void *cq_context, struct ibv_comp_channel *channel, int comp_vector);` | Creates a **Completion Queue (CQ)** that stores Work Completions (WCs) from QPs. Optionally associates it with a **Completion Channel** for asynchronous event-driven notification. | `context`: Device context.<br>`cqe`: Maximum number of entries.<br>`cq_context`: User-defined pointer (can be `NULL`).<br>`channel`: Optional completion channel.<br>`comp_vector`: Completion vector index (for IRQ distribution). | Returns `ibv_cq*` on success; `NULL` on failure.   | Create CQ for QP completions; optionally bind to a completion channel for async CQ events. |
+| `int ibv_destroy_cq(struct ibv_cq *cq);`                                                                                                   | Destroys a previously created CQ. Must not be called while any QP or event still references it.                                                                                     | `cq`: Pointer returned by `ibv_create_cq()`.                                                                                                                                                                                        | Returns `0` on success; negative value on failure. | Called during cleanup when the CQ is no longer in use.                                     |
+| `int ibv_resize_cq(struct ibv_cq *cq, int cqe);`                                                                                           | Resizes a CQ to increase or decrease its capacity (`cqe`). Supported only on certain devices.                                                                                       | `cq`: CQ handle.<br>`cqe`: New capacity.                                                                                                                                                                                            | Returns `0` on success; negative value on failure. | Used for runtime scaling when workload changes.                                            |
+
+### Shared Receive Queue control
+| Function                                                                                                        | Description                                                                                                                          | Parameters                                                                                                                           | Return Value                                      | Typical Usage / Notes                                                                               |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `struct ibv_srq *ibv_create_srq(struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr);`                   | Creates a **Shared Receive Queue (SRQ)** within a **Protection Domain (PD)** so multiple QPs can share a common receive buffer pool. | `pd`: Protection Domain;<br>`srq_init_attr`: Initial attributes (`attr.max_wr`, `attr.max_sge`, optional `srq_context`, `srq_type`). | Returns `ibv_srq*` on success; `NULL` on failure. | Reduce memory footprint and centralize Recv replenishment; attach SRQ to QPs via `ibv_create_qp()`. |
+| `int ibv_destroy_srq(struct ibv_srq *srq);`                                                                     | Destroys the SRQ and frees resources.                                                                                                | `srq`: Handle returned by `ibv_create_srq()`.                                                                                        | `0` on success; negative on failure.              | Ensure no QP references the SRQ and no outstanding WRs remain.                                      |
+| `int ibv_modify_srq(struct ibv_srq *srq, struct ibv_srq_attr *srq_attr, enum ibv_srq_attr_mask srq_attr_mask);` | Modifies SRQ attributes—commonly **resizing `max_wr`** or setting/updating the **`limit` threshold** to trigger SRQ events.          | `srq`: Handle;<br>`srq_attr`: New attributes (`max_wr`, `limit`);<br>`srq_attr_mask`: Bitmask (`IBV_SRQ_MAX_WR`, `IBV_SRQ_LIMIT`).   | `0` on success; negative on failure.              | Runtime growth or low-watermark notification to proactively replenish Recv WRs.                     |
+| `int ibv_query_srq(struct ibv_srq *srq, struct ibv_srq_attr *srq_attr);`                                        | Queries the current SRQ attributes (`max_wr`, `max_sge`, `srq_limit`, etc.).                                                         | `srq`: Handle;<br>`srq_attr`: Output structure.                                                                                      | `0` on success; negative on failure.              | Observe capacity and thresholds to tune replenishment policies.                                     |
+
+### Queue Pair control
+| Function                                                                                                                              | Description                                                                                                                                               | Parameters                                                                                                                                                              | Return Value                                       | Typical Usage / Notes                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
+| `struct ibv_qp *ibv_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr);`                                             | Creates a **Queue Pair (QP)**, consisting of a **Send Queue (SQ)** and a **Receive Queue (RQ)**. QPs are the fundamental communication endpoints in RDMA. | `pd`: Protection Domain;<br>`qp_init_attr`: Initialization attributes (QP type, CQ/SRQ association, capabilities, etc.).                                                | Returns `ibv_qp*` on success; `NULL` on failure.   | Establishes RC/UC/UD connections; optionally attaches to a shared SRQ. |
+| `int ibv_destroy_qp(struct ibv_qp *qp);`                                                                                              | Destroys a previously created QP and releases all associated resources.                                                                                   | `qp`: Handle returned by `ibv_create_qp()`.                                                                                                                             | Returns `0` on success; negative on failure.       | Called during cleanup after all outstanding WRs are completed.         |
+| `int ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr, enum ibv_qp_attr_mask attr_mask);`                                    | Modifies a QP’s attributes — typically used to transition between states (`RESET → INIT → RTR → RTS`) or change parameters such as PSN, path, or QKey.    | `qp`: QP handle;<br>`attr`: Attributes to set;<br>`attr_mask`: Bitmask specifying which fields to update (e.g., `IBV_QP_STATE`, `IBV_QP_AV`, `IBV_QP_PATH_MTU`).        | Returns `0` on success; negative value on failure. | Used in connection setup, state migration, or reconfiguration.         |
+| `int ibv_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr, enum ibv_qp_attr_mask attr_mask, struct ibv_qp_init_attr *init_attr);` | Queries the current attributes and initialization parameters of a QP.                                                                                     | `qp`: QP handle;<br>`attr`: Output for current attributes;<br>`attr_mask`: Specifies which attributes to query;<br>`init_attr`: Output for initial creation attributes. | Returns `0` on success; negative value on failure. | Used for debugging, monitoring, or verifying QP state.                 |
+
+### Posting Work Requests to QPs/SRQs
+| Function                                                                                                     | Description                                                                                                                                  | Parameters                                                                                                | Return Value                         | Typical Usage / Notes                                                                                 |
+| ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr);`                 | Posts one or a chain of **send WRs** to a QP’s **Send Queue (SQ)** (`wr->next`-linked). Supports `SEND`, `RDMA_READ/WRITE`, `ATOMIC_*`, etc. | `qp`: Target QP;<br>`wr`: First WR in the chain;<br>`bad_wr`: On failure, set to the **first failed** WR. | `0` on success; negative on failure. | Use flags like `IBV_SEND_SIGNALED`, `IBV_SEND_INLINE`, `IBV_SEND_FENCE`; `wr_id` echoes back in CQEs. |
+| `int ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr);`                 | Posts one or a chain of **receive WRs** to a QP’s **Receive Queue (RQ)**.                                                                    | `qp`: Target QP;<br>`wr`: First WR;<br>`bad_wr`: Set to first failed WR if any.                           | `0` on success; negative on failure. | Pre-post enough RQs to avoid drops; for UD with GRH, first SGE must reserve **40B GRH** space.        |
+| `int ibv_post_srq_recv(struct ibv_srq *srq, struct ibv_recv_wr *recv_wr, struct ibv_recv_wr **bad_recv_wr);` | Posts **receive WRs** to a **Shared Receive Queue (SRQ)** shared by multiple QPs.                                                            | `srq`: Target SRQ;<br>`recv_wr`: First WR;<br>`bad_recv_wr`: First failed WR.                             | `0` on success; negative on failure. | Centralized Recv replenishment across many QPs; pair with `IBV_SRQ_LIMIT` for low-watermark events.   |
+
+### Reading Completions from CQ
+| Function                                                                  | Description                                                                                                                                                     | Parameters                                                                                                                                                      | Return Value                                                                                           | Typical Usage / Notes                                                             |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc);` | **Polls (non-blocking)** a Completion Queue (CQ) for completed Work Completions (WCs). Each WC represents a completed send, receive, RDMA, or atomic operation. | `cq`: CQ handle to poll.<br>`num_entries`: Maximum number of completions to retrieve.<br>`wc`: User-allocated array of `struct ibv_wc` for storing the results. | Returns the number of completions retrieved (`0` = none available, `>0` = count of WCs, `<0` = error). | Used to actively check for completions in low-latency or non-event-driven setups. |
+
+### Requesting / Managing CQ events
+| Function                                                                                         | Description                                                                                                                      | Parameters                                                                                                                                                              | Return Value                         | Typical Usage / Notes                                                                                                          |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `int ibv_req_notify_cq(struct ibv_cq *cq, int solicited_only);`                                  | **Arms** a CQ for event notification via its bound completion channel. New completions will trigger an event.                    | `cq`: Target CQ;<br>`solicited_only`: If non-zero, notify **only on solicited completions** (receiver CQE has the solicited bit set; sender sets `IBV_SEND_SOLICITED`). | `0` on success; negative on failure. | Must be called **every time after** you drain the CQ following an event to re-arm notifications.                               |
+| `int ibv_get_cq_event(struct ibv_comp_channel *channel, struct ibv_cq **cq, void **cq_context);` | **Blocks** until an event is available on the completion channel and returns the `cq` and its `cq_context` (set at CQ creation). | `channel`: Completion channel;<br>`cq`: Out param for the CQ;<br>`cq_context`: Out param for user context.                                                              | `0` on success; negative on failure. | Typically used with `poll/epoll` on `channel->fd`. After getting an event, immediately drain completions with `ibv_poll_cq()`. |
+| `void ibv_ack_cq_events(struct ibv_cq *cq, unsigned int nevents);`                               | **Acknowledges** previously retrieved CQ events to release kernel-side accounting.                                               | `cq`: The CQ for which events were obtained;<br>`nevents`: Number of events being acknowledged.                                                                         | None                                 | The number of acks **must exactly match** calls to `ibv_get_cq_event()`; do not over/under-ack.                                |
+
+### Multicast group
+| Function                                                                     | Description                                                                                                                               | Parameters                                                                                                  | Return Value                                 | Typical Usage / Notes                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
+| `int ibv_attach_mcast(struct ibv_qp *qp, union ibv_gid *gid, uint16_t lid);` | Attaches a **UD (Unreliable Datagram) QP** to a **multicast group**, allowing it to receive packets sent to that group address (GID/LID). | `qp`: Target UD QP;<br>`gid`: GID of the multicast group;<br>`lid`: LID of the group (set to 0 for RoCEv2). | Returns `0` on success; negative on failure. | Join a multicast group for InfiniBand or RoCE multicast communication. |
+| `int ibv_detach_mcast(struct ibv_qp *qp, union ibv_gid *gid, uint16_t lid);` | Detaches a QP from a multicast group, disabling reception of packets addressed to that group.                                             | `qp`: Target UD QP;<br>`gid`: GID of the multicast group to leave;<br>`lid`: LID (0 for RoCEv2).            | Returns `0` on success; negative on failure. | Leave a multicast group and release related resources.                 |
+
+### General functions
+| Function                                                          | Description                                                                                                             | Parameters                     | Return Value                                           | Typical Usage / Notes                                          |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------- |
+| `int ibv_rate_to_mult(enum ibv_rate rate);`                       | Converts an **`ibv_rate` enumeration** value into a numeric multiplier (in Gbps). For example, `IBV_RATE_10_GBPS → 10`. | `rate`: Link rate enum value.  | Returns integer multiplier (e.g., 10 for 10 Gbps).     | Translate symbolic rate into numeric form for display or math. |
+| `enum ibv_rate mult_to_ibv_rate(int mult);`                       | Converts a numeric multiplier (in Gbps) back into an **`ibv_rate` enum**.                                               | `mult`: Multiplier value.      | Returns the corresponding `ibv_rate` enumeration.      | Set device attributes or compare link speeds.                  |
+| `const char *ibv_node_type_str(enum ibv_node_type node_type);`    | Returns a string name for a **node type**, such as “CA”, “SWITCH”, or “ROUTER”.                                         | `node_type`: Node type enum.   | String describing the node type (static, do not free). | Useful for printing device topology information.               |
+| `const char *ibv_port_state_str(enum ibv_port_state port_state);` | Returns a human-readable **port state** name (e.g., “Down”, “Init”, “Active”).                                          | `port_state`: Port state enum. | String representing the state.                         | Used when logging or displaying port information.              |
+| `const char *ibv_event_type_str(enum ibv_event_type event);`      | Returns a string for an **asynchronous event type**, such as “CQ_ERR”, “SRQ_LIMIT_REACHED”, or “PORT_ACTIVE”.           | `event`: Event type enum.      | String describing the event.                           | For readable event handling and diagnostics.                   |
+| `const char *ibv_wc_status_str(enum ibv_wc_status status);`       | Returns a string describing a **Work Completion (WC) status**, e.g., “SUCCESS”, “RETRY_EXC_ERR”, “LOCAL_LENGTH_ERR”.    | `status`: WC status enum.      | String representation of the WC status.                | Essential for interpreting CQ completions during debugging.    |
+
+
+### Resource creation dependency
+
+```mermaid
+graph LR
+    %% ====== 节点定义 ======
+    A(["**struct ibv_device**"])
+    B(["**struct ibv_context**"])
+    C(["**struct ibv_pd**"])
+    D(["**struct ibv_comp_channel**"])
+    E(["**struct ibv_mr**"])
+    F(["**struct ibv_ah**"])
+    G(["**struct ibv_srq**"])
+    H(["**struct ibv_cq**"])
+    I(["**struct ibv_qp**"])
+
+    %% ====== 主体结构 ======
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    C --> F
+    C --> G
+    C --> H
+    C --> I
+    D -.-> H
+    D -.-> I
+    G -.-> I
+    H --> I
+
+    %% ====== 图例 ======
+    subgraph legend ["Legend"]
+        style legend fill:#f9f9f9,stroke:#bbb,stroke-width:1px
+        L1["<b>→</b> Mandatory"]
+        L2["<b>⋯→</b> Optional"]
+    end
+
+    %% ====== 样式定义 ======
+    classDef nodeStyle fill:#eef2f6,stroke:#444,stroke-width:1px,color:#111,rx:6,ry:6;
+    classDef optLine stroke-dasharray:5 5,stroke:#666,color:#333;
+
+    class A,B,C,D,E,F,G,H,I nodeStyle;
+```
+## Simple IB verbs RDMA program
+
+reference:https://blog.zhaw.ch/icclab/infiniband-an-introduction-simple-ib-verbs-program-with-rdma-write/
+
+```mermaid
+%%{init: {"theme": "neutral", "themeVariables": {
+  "primaryColor": "#f2f2f2",
+  "primaryTextColor": "#000000",
+  "primaryBorderColor": "#000000",
+  "lineColor": "#000000",
+  "fontSize": "15px",
+  "textColor": "#000000",
+  "noteTextColor": "#000000",
+  "noteBkgColor": "#e0e0e0",
+  "noteBorderColor": "#000000"
+}}}%%
+sequenceDiagram
+    participant S as Sender/Server
+    participant C as Receiver/Client
+
+    rect rgb(245,245,245)
+    Note over S,C: A) Initialize context & base resources
+    S->>S: ibv_get_device_list / ibv_open_device
+    S->>S:ibv_alloc_pd / ibv_reg_mr / create_cq / create_qp
+
+    C->>C: ibv_get_device_list / ibv_open_device
+    C->>C: ibv_alloc_pd / ibv_reg_mr / create_cq / create_qp
+    end
+
+    rect rgb(245,245,245)
+    Note over S,C: B) QP → INIT
+    S->>S: ibv_modify_qp (to INIT)
+    C->>C: ibv_modify_qp (to INIT)
+    end
+
+    rect rgb(245,245,245) 
+    Note over S,C: C) Prepare & exchange IB connection info (via TCP)
+    S->>S: ibv_query_port → fill local_info 
+    C->>C: ibv_query_port → fill local_info 
+    S-->>C: send local_info 
+    C-->>S: send local_info 
+    end
+
+    rect rgb(245,245,245)
+    Note over C: D) Receiver pre-post Recv
+    C->>C: ibv_post_recv()
+    end
+
+    rect rgb(245,245,245)
+    Note over S,C: E) QP → RTR
+    S->>S: ibv_modify_qp (to RTR)
+    C->>C: ibv_modify_qp (to RTR)
+    end
+
+    rect rgb(245,245,245)
+    Note over S,C: F) QP → RTS
+    S->>S: ibv_modify_qp (to RTS)
+    C->>C: ibv_modify_qp (to RTS)
+    end
+
+    rect rgb(245,245,245)
+    Note over S,C: G) Data path
+    S->>S: ibv_post_send (RDMA_WRITE / READ / SEND)
+    C->>C: ibv_poll_cq() or get_cq_event()+ack
+    C->>C: repost Recv if needed
+    end
+
+    rect rgb(245,245,245)
+    Note over S,C: H) Cleanup
+    S->>S: destroy_qp / cq / mr / pd / ctx
+    C->>C: destroy_qp / cq / mr / pd / ctx
+    end
+
+```
