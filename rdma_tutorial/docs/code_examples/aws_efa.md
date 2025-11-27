@@ -1,5 +1,5 @@
-> Notice: Because our current devices do not support EFA, we could not execute the RDMA test.  
-Here is the functional description of the code:  [efa_rdma_write.cc](https://github.com/uccl-project/uccl/blob/main/misc/efa_rdma_write.cc) 
+> Notice: Because our current devices do not support EFA, we could not execute the RDMA test. Here is the functional description of the code:  [efa_rdma_write.cc](https://github.com/uccl-project/uccl/blob/main/misc/efa_rdma_write.cc) 
+
 
 Example (verbs):
 ```c
