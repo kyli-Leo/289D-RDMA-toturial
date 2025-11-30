@@ -137,4 +137,26 @@ void rc_recv(void* data, int size, struct Mhandle* mhandle,
 
 ## Shared Completion queue
 
+
+### key idea
+
+### Detailed explaination
+
+```
+source code 
+
+```
+### reference
+
 ## Shared received queue
+
+### key idea
+
+### Detailed explaination
+
+```
+source code
+
+```
+
+### reference
