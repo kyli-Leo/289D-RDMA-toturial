@@ -186,9 +186,9 @@ ibv_post_recv(rdma->qp, &wr, &bad);
 5. Issue two RDMA writes with immediate:
     * one full-size message
     * one small 8-byte message
-    ```c
-    ibv_wr_rdma_write_imm(wr, remote_rkey, remote_addr, imm_data);
-    ```
+  ```c
+  ibv_wr_rdma_write_imm(wr, remote_rkey, remote_addr, imm_data);
+  ```
 6. Poll CQ for completion
 
 ---
