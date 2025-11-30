@@ -1,14 +1,16 @@
+# EFA RDMA Write Example
+
+
 > **Notice:**  
 > Because our current devices do not support EFA, we could not execute the RDMA test.  
 > Here is the functional description of the code:  
 > [efa_rdma_write.cc](https://github.com/uccl-project/uccl/blob/main/misc/efa_rdma_write.cc)
 
 
-# EFA RDMA Write Example
 
-This project demonstrates how to build a simple **RDMA Write with Immediate** pipeline using **Amazon EFA** and its **SRD QP** capability. Although the current testing environment does not support EFA, this document describes the functional behavior of the program.
+This page examplain the code of [efa_rdma_write.cc](https://github.com/uccl-project/uccl/blob/main/misc/efa_rdma_write.cc) about how to build a simple **RDMA Write with Immediate** pipeline using **Amazon EFA** and its **SRD QP** capability. Although the current testing environment does not support EFA, this document describes the functional behavior of the code.
 
-The example shows:
+The code example of [efa_rdma_write.cc](https://github.com/uccl-project/uccl/blob/main/misc/efa_rdma_write.cc) shows:
 
 * RDMA resource initialization (PD, CQ, MR, QP)
 * Exchanging QPN/GID/rkey/addr over TCP
@@ -182,18 +184,4 @@ This side performs the actual RDMA data transfer.
 * Server receives the writes via CQ
 * Immediate data is delivered alongside each write
 * The server prints the final message stored in its buffer
-
----
-
-## 10. Conclusion
-
-This example demonstrates the minimal workflow required to use **EFA SRD QP for RDMA operations**:
-
-1. **Metadata exchange** establishes addressing and memory sharing
-2. **SRD QP** combines UD routing with RC-style features
-3. **Immediate data** allows tagging or sequencing
-4. **Extended CQ polling** retrieves rich completion information
-5. **Client-driven RDMA writes** update the server buffer without CPU involvement
-
-Although the program cannot be executed without EFA hardware, the code illustrates the complete RDMA data path from initialization to completion handling.
 
