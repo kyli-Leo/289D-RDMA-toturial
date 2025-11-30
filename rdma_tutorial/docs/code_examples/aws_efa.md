@@ -37,9 +37,8 @@ The implementation follows a **client–server model**:
 * Exchanges metadata with the server
 * Creates an Address Handle (AH) with server’s GID
 * Performs two RDMA writes:
-
-  * one large message
-  * one small message
+    * one large message
+    * one small message
 * Polls CQ for completion
 
 ---
@@ -164,9 +163,8 @@ The server is fully passive in the data movement.
 3. Create AH with the server’s GID
 4. Prepare local message
 5. Issue two RDMA writes with immediate:
-
-   * one full-size message
-   * one small 8-byte message
+    * one full-size message
+    * one small 8-byte message
 6. Poll CQ for completion
 
 This side performs the actual RDMA data transfer.
