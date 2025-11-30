@@ -133,3 +133,8 @@ void rc_recv(void* data, int size, struct Mhandle* mhandle,
 >1. header with `RetrHdrBuffPool`, data with `RetrChunkBuffPool`, and each of them is in its own MR. By "gathering" two SGEs at the NIC end into one packet, the CPU does not need to concatenate, nor does it need to combine the `retr_chunk_hdr` and chunk data into a continuous buffer, thus avoiding additional copying.
 >2. Since the header and chunk are multiple SGEs of a WQE, they can be guaranteed to arrive together. 
 >3. The dedicated `retr_mr_`/`retr_hdr_mr_` for retransmission does not affect the normal data path MR; the retransmission logic does not need to modify the original sending code; .
+
+
+## Shared Completion queue
+
+## Shared received queue
