@@ -133,8 +133,6 @@ The client polls for:
 IBV_WC_RDMA_WRITE
 ```
 
-Polling continues until the expected number of completions arrive.
-
 ---
 
 ## 7. Server Workflow
@@ -148,8 +146,6 @@ Polling continues until the expected number of completions arrive.
 5. Post two receive WQEs
 6. Wait for two RDMA writes from client
 7. Print the received buffer
-
-The server is fully passive in the data movement.
 
 ---
 
@@ -165,8 +161,6 @@ The server is fully passive in the data movement.
     * one full-size message
     * one small 8-byte message
 6. Poll CQ for completion
-
-This side performs the actual RDMA data transfer.
 
 ---
 
