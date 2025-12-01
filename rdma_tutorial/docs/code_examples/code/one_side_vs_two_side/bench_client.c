@@ -124,9 +124,8 @@ int main(int argc, char **argv) {
 
   while (done < iters) {
     while (posted - done < window && posted < iters) {
-      struct ibv_sge s = {.addr = (uintptr_t)buf,
-                          .length = (uint32_t)msg,
-                          .lkey = mr->lkey};
+      struct ibv_sge s = {
+          .addr = (uintptr_t)buf, .length = (uint32_t)msg, .lkey = mr->lkey};
       struct ibv_send_wr wr = {0}, *bad = NULL;
       wr.wr_id = posted;
       wr.sg_list = &s;
@@ -154,20 +153,25 @@ int main(int argc, char **argv) {
     if (n < 0)
       die("poll_cq");
     for (int i = 0; i < n; ++i) {
-      if (wc[i].status)
+      if (wc[i].status) {
+        printf("RDMA error: wr_id=%lu status=%d(%s) vendor_err=0x%x\n",
+               wc[i].wr_id, wc[i].status, ibv_wc_status_str(wc[i].status),
+               wc[i].vendor_err);
         die("wc");
+      }
       done++;
     }
   }
 
   clock_gettime(CLOCK_MONOTONIC, &ts1);
-  double sec = (ts1.tv_sec - ts0.tv_sec) +
-               (ts1.tv_nsec - ts0.tv_nsec) / 1e9;
+  double sec = (ts1.tv_sec - ts0.tv_sec) + (ts1.tv_nsec - ts0.tv_nsec) / 1e9;
   double mops = iters / sec / 1e6;
   double bw = (iters * msg) / sec / (1024.0 * 1024.0 * 1024.0);
-  const char *mstr = mode == MODE_READ ? "read" : (mode == MODE_WRITE ? "write" : "send");
-  printf("[client] %s done: %.2f Mops, %.2f GiB/s (msg=%zu bytes, window=%lu)\n",
-         mstr, mops, bw, msg, (unsigned long)window);
+  const char *mstr =
+      mode == MODE_READ ? "read" : (mode == MODE_WRITE ? "write" : "send");
+  printf(
+      "[client] %s done: %.2f Mops, %.2f GiB/s (msg=%zu bytes, window=%lu)\n",
+      mstr, mops, bw, msg, (unsigned long)window);
 
   rdma_disconnect(id);
   ibv_dereg_mr(mr);

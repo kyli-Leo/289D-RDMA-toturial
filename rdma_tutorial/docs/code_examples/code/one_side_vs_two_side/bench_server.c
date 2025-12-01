@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
   if (rdma_listen(lid, 1))
     die("listen");
   printf("[server] listening on %d (mode=%s msg=%zu iters=%lu)\n", port,
-         mode == MODE_READ ? "read" : "send", msg, (unsigned long)iters);
+         mode == MODE_READ ? "read" : (mode == MODE_WRITE ? "write" : "send"),
+         msg, (unsigned long)iters);
 
   if (rdma_get_cm_event(ec, &e))
     die("get_event");
