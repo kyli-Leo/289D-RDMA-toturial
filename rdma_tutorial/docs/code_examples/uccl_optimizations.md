@@ -228,7 +228,7 @@ We know that the foundation of RDMA communication is the Queue Pair (QP), where 
 A Shared Completion Queue (SCQ) means multiple QP use the same CQ to report their work completions, instead of each QP having a dedicated CQ. The motivation is to reduce polling overhead and resource usage – a single thread can poll one CQ for completions from many QPs, rather than polling one CQ per QP. This improves scalability in applications managing numerous connections or flows. By multiplexing all completion events into one queue, SCQs allow faster detection of completed operations and simplify event handling.
 
  <p align="center">
-<img src="sCq.png" width="200">
+<img src="SCQ.png" width="200">
 </p>
 
 ### Code explaination
