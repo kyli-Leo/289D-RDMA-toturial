@@ -17,8 +17,8 @@ BENCH_CLIENT = "./bench_client"
 BENCH_SERVER = "./bench_server"
 
 # 结果输出（用一个新的文件，避免和之前混在一起）
-RESULT_CSV = "rdma_msg_sweep_4.csv"
-PLOT_DIR = Path("plots_msg_sweep_4")
+RESULT_CSV = "rdma_msg_sweep_test.csv"
+PLOT_DIR = Path("plots_msg_sweep_test")
 
 # 实验参数
 FIXED_WINDOW = 4  # 固定 window
