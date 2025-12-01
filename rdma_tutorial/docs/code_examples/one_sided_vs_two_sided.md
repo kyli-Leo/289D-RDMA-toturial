@@ -94,3 +94,5 @@ Here's our results:
 As you can see in the resulted graphs, the message size would decrease MOPS but increase bandwidth.
 
 When the queue depth is small (4), increasing the message size would greatly increase the bandwitdh and that does not converge to mature. However,  when the depth gets larger(64), the bandwidth converges at message size $2^{12}$ (4096) bytes and further increase of message size would only decrease MOPS.
+
+The experiment also shows that we should use a sufficiently large queue depth, as it has a significant impact on RDMA performance. This is often overlooked in other tutorials, but a larger queue depth is essential to fully utilize the network’s capacity.
