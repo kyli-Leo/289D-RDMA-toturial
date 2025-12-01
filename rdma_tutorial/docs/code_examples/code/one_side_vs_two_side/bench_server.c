@@ -13,7 +13,7 @@ struct Info {
   uint32_t rkey, len;
 } __attribute__((packed));
 
-enum Mode { MODE_READ, MODE_SEND };
+enum Mode { MODE_READ, MODE_WRITE, MODE_SEND };
 
 static void die(const char *m) {
   perror(m);
@@ -22,7 +22,7 @@ static void die(const char *m) {
 
 static void usage(const char *p) {
   fprintf(stderr,
-          "Usage: %s <port> [--mode read|send] [--msg N] [--iters N] "
+          "Usage: %s <port> [--mode read|write|send] [--msg N] [--iters N] "
           "[--recv-depth N]\n",
           p);
 }
@@ -41,7 +41,12 @@ int main(int argc, char **argv) {
 
   for (int i = 2; i < argc; ++i) {
     if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
-      mode = !strcmp(argv[i + 1], "send") ? MODE_SEND : MODE_READ;
+      if (!strcmp(argv[i + 1], "send"))
+        mode = MODE_SEND;
+      else if (!strcmp(argv[i + 1], "write"))
+        mode = MODE_WRITE;
+      else
+        mode = MODE_READ;
       i++;
     } else if (!strcmp(argv[i], "--msg") && i + 1 < argc) {
       msg = strtoull(argv[++i], NULL, 0);
@@ -94,6 +99,8 @@ int main(int argc, char **argv) {
   int access = IBV_ACCESS_LOCAL_WRITE;
   if (mode == MODE_READ)
     access |= IBV_ACCESS_REMOTE_READ;
+  if (mode == MODE_WRITE)
+    access |= IBV_ACCESS_REMOTE_WRITE;
   struct ibv_mr *mr = ibv_reg_mr(id->pd, buf, buf_len, access);
   if (!mr)
     die("reg_mr");
@@ -152,7 +159,8 @@ int main(int argc, char **argv) {
     double bw = (iters * msg) / sec / (1024.0 * 1024.0 * 1024.0);
     printf("[server] recv done: %.2f Mops, %.2f GiB/s\n", mops, bw);
   } else {
-    printf("[server] ready for client RDMA READ, waiting for disconnect...\n");
+    printf("[server] ready for client RDMA %s, waiting for disconnect...\n",
+           mode == MODE_READ ? "READ" : "WRITE");
     if (rdma_get_cm_event(ec, &e))
       die("wait_disconnect");
     if (e->event != RDMA_CM_EVENT_DISCONNECTED)

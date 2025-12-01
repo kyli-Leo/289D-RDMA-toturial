@@ -13,7 +13,7 @@ struct Info {
   uint32_t rkey, len;
 } __attribute__((packed));
 
-enum Mode { MODE_READ, MODE_SEND };
+enum Mode { MODE_READ, MODE_WRITE, MODE_SEND };
 
 static void die(const char *m) {
   perror(m);
@@ -22,7 +22,7 @@ static void die(const char *m) {
 
 static void usage(const char *p) {
   fprintf(stderr,
-          "Usage: %s <server_ip> <port> [--mode read|send] [--msg N] "
+          "Usage: %s <server_ip> <port> [--mode read|write|send] [--msg N] "
           "[--iters N] [--window N]\n",
           p);
 }
@@ -42,7 +42,12 @@ int main(int argc, char **argv) {
 
   for (int i = 3; i < argc; ++i) {
     if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
-      mode = !strcmp(argv[i + 1], "send") ? MODE_SEND : MODE_READ;
+      if (!strcmp(argv[i + 1], "send"))
+        mode = MODE_SEND;
+      else if (!strcmp(argv[i + 1], "write"))
+        mode = MODE_WRITE;
+      else
+        mode = MODE_READ;
       i++;
     } else if (!strcmp(argv[i], "--msg") && i + 1 < argc) {
       msg = strtoull(argv[++i], NULL, 0);
@@ -132,6 +137,10 @@ int main(int argc, char **argv) {
         wr.opcode = IBV_WR_RDMA_READ;
         wr.wr.rdma.remote_addr = info.addr;
         wr.wr.rdma.rkey = info.rkey;
+      } else if (mode == MODE_WRITE) {
+        wr.opcode = IBV_WR_RDMA_WRITE;
+        wr.wr.rdma.remote_addr = info.addr;
+        wr.wr.rdma.rkey = info.rkey;
       } else {
         wr.opcode = IBV_WR_SEND;
       }
@@ -156,9 +165,9 @@ int main(int argc, char **argv) {
                (ts1.tv_nsec - ts0.tv_nsec) / 1e9;
   double mops = iters / sec / 1e6;
   double bw = (iters * msg) / sec / (1024.0 * 1024.0 * 1024.0);
+  const char *mstr = mode == MODE_READ ? "read" : (mode == MODE_WRITE ? "write" : "send");
   printf("[client] %s done: %.2f Mops, %.2f GiB/s (msg=%zu bytes, window=%lu)\n",
-         mode == MODE_READ ? "read" : "send", mops, bw, msg,
-         (unsigned long)window);
+         mstr, mops, bw, msg, (unsigned long)window);
 
   rdma_disconnect(id);
   ibv_dereg_mr(mr);
