@@ -135,28 +135,223 @@ void rc_recv(void* data, int size, struct Mhandle* mhandle,
 >3. The dedicated `retr_mr_`/`retr_hdr_mr_` for retransmission does not affect the normal data path MR; the retransmission logic does not need to modify the original sending code; .
 
 
+## Shared Receive queue
+
+
+### key idea
+
+We know that the foundation of RDMA communication is the Queue Pair (QP), where each QP contains its own Send Queue (SQ) and Receive Queue (RQ). In UCCL’s RDMA design, a major optimization is the use of a Shared Receive Queue (SRQ). Without SRQ, applications with hundreds of QPs must post receive Work Requests (WRs) to every individual RQ, which leads to large and fragmented buffer pools where many RQ entries remain idle. SRQ solves this inefficiency by allowing multiple QPs to share a single unified RQ. All incoming messages across those QPs draw from the same pool of posted receive buffers. This significantly reduces memory consumption and improves scalability, because the receiver only needs to maintain one shared buffer pool sized for the aggregate traffic instead of over-provisioning each connection separately.
+
+<p align="center">
+<img src="SRQ.png" width="260">
+</p>
+
+
+### Code explaination
+<details>
+<summary>Click to expand source code(part 1)</summary>
+
+    srq_ = util_rdma_create_srq(pd, kMaxSRQ, 1, 0);
+    UCCL_INIT_CHECK(srq_ != nullptr "util_rdma_create_srq failed");
+
+    retr_mr_ = util_rdma_create_host_memory_mr(
+        pd, kRetrChunkSize * RetrChunkBuffPool::kNumChunk);
+    retr_hdr_mr_ = util_rdma_create_host_memory_mr(
+        pd, RetrHdrBuffPool::kNumHdr * RetrHdrBuffPool::kHdrSize);
+
+    // Initialize retransmission chunk and header buffer pool.
+    retr_chunk_pool_.emplace(retr_mr_);
+    retr_hdr_pool_.emplace(retr_hdr_mr_);
+
+    cq_desc_mr_ = util_rdma_create_host_memory_mr(
+        pd, CQEDescPool::kNumDesc * CQEDescPool::kDescSize);
+    cq_desc_pool_.emplace(cq_desc_mr_);
+
+    // Populate recv work requests to SRQ for consuming immediate data.
+    inc_post_srq(kMaxSRQ);
+    while (get_post_srq_cnt() > 0) {
+      check_srq(true);
+    }
+</details>
+
+<details>
+<summary>Click to expand source code(part 2)</summary>
+
+    void SharedIOContext::check_srq(bool force) {
+      auto n_post_srq = get_post_srq_cnt();
+      if (!force && n_post_srq < kPostRQThreshold) return;
+
+      int post_batch = std::min(kPostRQThreshold, (uint32_t)n_post_srq);
+
+      for (int i = 0; i < post_batch; i++) {
+        if (!is_rc_mode()) {
+          auto chunk_addr = pop_retr_chunk();
+          dp_recv_wrs_.recv_sges[i].addr = chunk_addr;
+          dp_recv_wrs_.recv_sges[i].length = kRetrChunkSize;
+          dp_recv_wrs_.recv_sges[i].lkey = get_retr_chunk_lkey();
+          dp_recv_wrs_.recv_wrs[i].num_sge = 1;
+          dp_recv_wrs_.recv_wrs[i].sg_list = &dp_recv_wrs_.recv_sges[i];
+          dp_recv_wrs_.recv_wrs[i].next =
+              (i == post_batch - 1) ? nullptr : &dp_recv_wrs_.recv_wrs[i + 1];
+
+          CQEDesc* cqe_desc = pop_cqe_desc();
+          cqe_desc->data = (uint64_t)chunk_addr;
+          dp_recv_wrs_.recv_wrs[i].wr_id = (uint64_t)cqe_desc;
+        } else {
+          dp_recv_wrs_.recv_wrs[i].num_sge = 0;
+          dp_recv_wrs_.recv_wrs[i].sg_list = nullptr;
+          dp_recv_wrs_.recv_wrs[i].next =
+              (i == post_batch - 1) ? nullptr : &dp_recv_wrs_.recv_wrs[i + 1];
+          dp_recv_wrs_.recv_wrs[i].wr_id = 0;
+        }
+      }
+    }
+
+    struct ibv_recv_wr* bad_wr;
+    CHECK(ibv_post_srq_recv(srq_, &dp_recv_wrs_.recv_wrs[0], &bad_wr) == 0);
+    // UCCL_LOG_IO << "Posted " << post_batch << " recv requests for SRQ";
+    dec_post_srq(post_batch);
+</details>
+
+### reference
+
+[-Savir; Zhihu Column; RDMA Shared Receive Queue ](https://cuterwrite.top/en/p/rdma-shared-receive-queue/#:~:text=RDMA%3A%20Shared%20Receive%20Queue%20,RQ%20is%20called%20an%20SRQ)
+
+[UCCL RDMA rdma_io.h ](https://github.com/uccl-project/uccl/blob/main/collective/rdma/rdma_io.h#L752)
+
+[UCCL RDMA rdma_io.cc ](https://github.com/uccl-project/uccl/blob/main/collective/rdma/rdma_io.cc#L500)
+
 ## Shared Completion queue
 
-
 ### key idea
 
-### Detailed explaination
+A Shared Completion Queue (SCQ) means multiple QP use the same CQ to report their work completions, instead of each QP having a dedicated CQ. The motivation is to reduce polling overhead and resource usage – a single thread can poll one CQ for completions from many QPs, rather than polling one CQ per QP. This improves scalability in applications managing numerous connections or flows. By multiplexing all completion events into one queue, SCQs allow faster detection of completed operations and simplify event handling.
 
-```
-source code 
+ <p align="center">
+<img src="sCq.png" width="200">
+</p>
 
-```
+### Code explaination
+
+<details>
+<summary>Click to expand source code</summary>
+
+    SharedIOContext(int dev) {
+      support_cq_ex_ = RDMAFactory::get_factory_dev(dev)->support_cq_ex;
+      rc_mode_ = ucclParamRCMode();
+      auto support_uc = RDMAFactory::get_factory_dev(dev)->support_uc;
+      auto ib_name = RDMAFactory::get_factory_dev(dev)->ib_name;
+      if (rc_mode_) {
+        if (support_uc) {
+          printf(
+              "Using RC on dev %s (per UCCL_RCMODE=1). Note it supports UC, so "
+              "using RC may give less optimized/scalable performance.\n",
+              ib_name);
+        }
+      } else {
+        rc_mode_ = !support_uc;
+      }
+      bypass_pacing_ = ucclParamBypassPacing();
+      auto context = RDMAFactory::get_factory_dev(dev)->context;
+      auto pd = RDMAFactory::get_factory_dev(dev)->pd;
+      auto port = RDMAFactory::get_factory_dev(dev)->ib_port_num;
+      if (support_cq_ex_) {
+        send_cq_ex_ = util_rdma_create_cq_ex(context, kCQSize);
+        recv_cq_ex_ = util_rdma_create_cq_ex(context, kCQSize);
+      } else {
+        send_cq_ex_ = (struct ibv_cq_ex*)util_rdma_create_cq(context, kCQSize);
+        recv_cq_ex_ = (struct ibv_cq_ex*)util_rdma_create_cq(context, kCQSize);
+      }
+      UCCL_INIT_CHECK(send_cq_ex_ != nullptr, "util_rdma_create_cq_ex failed");
+      UCCL_INIT_CHECK(recv_cq_ex_ != nullptr, "util_rdma_create_cq_ex failed");
+
+      if (support_cq_ex_) {
+        int ret =
+            util_rdma_modify_cq_attr(send_cq_ex_, kCQMODCount, kCQMODPeriod);
+        UCCL_INIT_CHECK(ret == 0, "util_rdma_modify_cq_attr failed");
+        ret = util_rdma_modify_cq_attr(recv_cq_ex_, kCQMODCount, kCQMODPeriod);
+        UCCL_INIT_CHECK(ret == 0, "util_rdma_modify_cq_attr failed");
+      }
+
+      srq_ = util_rdma_create_srq(pd, kMaxSRQ, 1, 0);
+      UCCL_INIT_CHECK(srq_ != nullptr, "util_rdma_create_srq failed");
+
+      retr_mr_ = util_rdma_create_host_memory_mr(
+          pd, kRetrChunkSize * RetrChunkBuffPool::kNumChunk);
+      retr_hdr_mr_ = util_rdma_create_host_memory_mr(
+          pd, RetrHdrBuffPool::kNumHdr * RetrHdrBuffPool::kHdrSize);
+
+      // Initialize retransmission chunk and header buffer pool.
+      retr_chunk_pool_.emplace(retr_mr_);
+      retr_hdr_pool_.emplace(retr_hdr_mr_);
+
+      cq_desc_mr_ = util_rdma_create_host_memory_mr(
+          pd, CQEDescPool::kNumDesc * CQEDescPool::kDescSize);
+      cq_desc_pool_.emplace(cq_desc_mr_);
+
+      // Populate recv work requests to SRQ for consuming immediate data.
+      inc_post_srq(kMaxSRQ);
+      while (get_post_srq_cnt() > 0) {
+        check_srq(true);
+      }
+
+      if (!rc_mode_) {
+        // Create Ctrl QP, CQ, and MR.
+        util_rdma_create_qp(
+            context, &ctrl_qp_, IBV_QPT_UD, support_cq_ex_, true,
+            (struct ibv_cq**)&ctrl_cq_ex_, false, kCQSize, pd, port, &ctrl_mr_,
+            nullptr, CtrlChunkBuffPool::kChunkSize * CtrlChunkBuffPool::kNumChunk,
+            kMaxCtrlWRs, kMaxCtrlWRs, 1, 1);
+
+        struct ibv_qp_attr attr = {};
+        attr.qp_state = IBV_QPS_RTR;
+        UCCL_INIT_CHECK(ibv_modify_qp(ctrl_qp_, &attr, IBV_QP_STATE) == 0,
+                        "ibv_modify_qp failed: ctrl qp rtr");
+
+        memset(&attr, 0, sizeof(attr));
+        attr.qp_state = IBV_QPS_RTS;
+        attr.sq_psn = BASE_PSN;
+        UCCL_INIT_CHECK(
+            ibv_modify_qp(ctrl_qp_, &attr, IBV_QP_STATE | IBV_QP_SQ_PSN) == 0,
+            "ibv_modify_qp failed: ctrl qp rts");
+
+        // Initialize Control packet buffer pool.
+        ctrl_chunk_pool_.emplace(ctrl_mr_);
+
+        // Populate recv work requests on Ctrl QP for consuming control packets.
+        {
+          for (int i = 0; i < kPostRQThreshold; i++) {
+            ctrl_recv_wrs_.recv_sges[i].lkey = get_ctrl_chunk_lkey();
+            ctrl_recv_wrs_.recv_sges[i].length = CtrlChunkBuffPool::kChunkSize;
+            ctrl_recv_wrs_.recv_wrs[i].sg_list = &ctrl_recv_wrs_.recv_sges[i];
+            ctrl_recv_wrs_.recv_wrs[i].num_sge = 1;
+          }
+
+          inc_post_ctrl_rq(kMaxCtrlWRs);
+          while (get_post_ctrl_rq_cnt() > 0) {
+            check_ctrl_rq(true);
+          }
+          for (int i = 0; i < kMaxAckWRs; i++) {
+            memset(&tx_ack_wr_[i], 0, sizeof(tx_ack_wr_[i]));
+            memset(&tx_ack_sge_[i], 0, sizeof(tx_ack_sge_[i]));
+            tx_ack_wr_[i].sg_list = &tx_ack_sge_[i];
+            tx_ack_wr_[i].num_sge = 1;
+            tx_ack_wr_[i].opcode = IBV_WR_SEND_WITH_IMM;
+            tx_ack_wr_[i].send_flags = IBV_SEND_SIGNALED;
+          }
+        }
+      }
+    }
+
+    ~SharedIOContext() {
+      ibv_destroy_cq(ibv_cq_ex_to_cq(send_cq_ex_));
+      ibv_destroy_cq(ibv_cq_ex_to_cq(recv_cq_ex_));
+      ibv_destroy_srq(srq_);
+      ibv_dereg_mr(retr_mr_);
+      ibv_dereg_mr(retr_hdr_mr_);
+    }
+</details>
+
 ### reference
 
-## Shared received queue
-
-### key idea
-
-### Detailed explaination
-
-```
-source code
-
-```
-
-### reference
+[UCCL RDMA rdma_io.h ](https://github.com/uccl-project/uccl/blob/main/collective/rdma/rdma_io.h#L713)
