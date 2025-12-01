@@ -110,6 +110,10 @@ int main(int argc, char **argv) {
   struct rdma_conn_param p = {0};
   p.private_data = &info;
   p.private_data_len = sizeof(info);
+
+  p.responder_resources = 16;
+  p.initiator_depth = 16;
+
   if (rdma_accept(id, &p))
     die("accept");
 
@@ -123,9 +127,8 @@ int main(int argc, char **argv) {
       struct ibv_sge s = {.addr = (uintptr_t)(buf + i * msg),
                           .length = (uint32_t)msg,
                           .lkey = mr->lkey};
-      struct ibv_recv_wr wr = {.wr_id = (uint64_t)i,
-                               .sg_list = &s,
-                               .num_sge = 1};
+      struct ibv_recv_wr wr = {
+          .wr_id = (uint64_t)i, .sg_list = &s, .num_sge = 1};
       if (ibv_post_recv(id->qp, &wr, &bad))
         die("post_recv");
     }
@@ -146,16 +149,14 @@ int main(int argc, char **argv) {
         struct ibv_sge s = {.addr = (uintptr_t)(buf + slot * msg),
                             .length = (uint32_t)msg,
                             .lkey = mr->lkey};
-        struct ibv_recv_wr wr = {.wr_id = (uint64_t)slot,
-                                 .sg_list = &s,
-                                 .num_sge = 1};
+        struct ibv_recv_wr wr = {
+            .wr_id = (uint64_t)slot, .sg_list = &s, .num_sge = 1};
         if (ibv_post_recv(id->qp, &wr, &bad))
           die("repost_recv");
       }
     }
     clock_gettime(CLOCK_MONOTONIC, &ts1);
-    double sec = (ts1.tv_sec - ts0.tv_sec) +
-                 (ts1.tv_nsec - ts0.tv_nsec) / 1e9;
+    double sec = (ts1.tv_sec - ts0.tv_sec) + (ts1.tv_nsec - ts0.tv_nsec) / 1e9;
     double mops = iters / sec / 1e6;
     double bw = (iters * msg) / sec / (1024.0 * 1024.0 * 1024.0);
     printf("[server] recv done: %.2f Mops, %.2f GiB/s\n", mops, bw);

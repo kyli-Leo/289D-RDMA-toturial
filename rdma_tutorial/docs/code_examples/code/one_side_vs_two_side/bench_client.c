@@ -94,6 +94,9 @@ int main(int argc, char **argv) {
     die("create_qp");
 
   struct rdma_conn_param p = {0};
+  p.initiator_depth = 16;
+  p.responder_resources = 16;
+
   if (rdma_connect(id, &p))
     die("connect");
 
