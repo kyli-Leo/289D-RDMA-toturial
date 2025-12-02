@@ -1,9 +1,6 @@
 site_name: RDMA Programming Tutorial
 site_description: A comprehensive guide to RDMA programming concepts and practices.
 site_author: RDMA Experts
-markdown_extensions:
-  - pymdownx.snippets
-  - pymdownx.superfences
 theme:
   name: material
   features:
@@ -24,6 +21,16 @@ nav:
       - RC vs UC Test: code_examples/rc_vs_uc_.md
       - UCCL optimizations: code_examples/uccl_optimizations.md
       - AWS EFA: code_examples/aws_efa.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: !relative
+  - pymdownx.superfences
       
   
 
