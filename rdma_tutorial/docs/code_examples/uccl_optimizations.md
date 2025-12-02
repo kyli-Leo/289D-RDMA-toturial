@@ -33,6 +33,7 @@ public:
 WrExBuffPool is for work request extension. Every `wr_ex` includes the work request `wr` and Scatter-Gather Element `sge`. The constructor function initializes each `wr` in the `wr_ex` by default, inheriting the original data, and for each `wr`, only one  `sge` needs to be done, and stores them in a chain-like form.
 
 In class `RDMAContext`, it has a optional WrExBuffPool. In this way, when sending data, no malloc WQE is performed. Instead, a batch of already initialized `wr_ex` is taken from `wr_ex_pool_`and used. Then, the data is organized for batch transmission by modifying sge/imm_data/next.
+
  ```
  // Buffer pool for work request extension items.
 std::optional<WrExBuffPool> wr_ex_pool_;
@@ -57,7 +58,6 @@ class TXTracking {
     struct wr_ex* wr_ex, uint64_t timestamp, uint32_t csn,   bool last_chunk) { 
         unacked_chunks_.push_back({ureq, wr_ex, timestamp, csn last_chunk});
 }
-
 ```
 
 Each chunk corresponds to a `wr_ex`, facilitating retransmission and statistics. The `unacked_chunks_` stores all the `wr_ex` that have not been acknowledged, and it is used for Measure the round-trip time (RTT), packet loss, and queue delay, and during retransmission, you can simply retrieve the original `wr_ex` and resend it (participating in the chained post process again in `RDMAContext::try_retransmit_chunk`)
