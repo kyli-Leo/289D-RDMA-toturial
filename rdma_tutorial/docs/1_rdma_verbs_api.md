@@ -15,7 +15,7 @@ To use the library, the code needs to include
 I will introduce every part of functions first, then I will show a example to the process of realizing RDMA.
 
 
-### Libraray function
+### Library function
 In libibverbs, the use of **fork()**  is a rather risky operation because InfiniBand resources (such as queue pairs QP, completion queues CQ, protection domains PD, memory registrations MR, etc.) are usually directly managed by the kernel driver, and the states of these resources are closely associated with the process address space. Once a process calls fork(), these kernel resources will not be duplicated, but the user-space handles (such as struct ibv_context *) will be copied to the child process, leading to serious inconsistencies and potential crashes.
 
     int ibv_fork_init(void);
