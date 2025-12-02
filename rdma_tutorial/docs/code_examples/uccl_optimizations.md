@@ -146,7 +146,7 @@ void rc_recv(void* data, int size, struct Mhandle* mhandle,
 We know that the foundation of RDMA communication is the Queue Pair (QP), where each QP contains its own Send Queue (SQ) and Receive Queue (RQ). In UCCL’s RDMA design, a major optimization is the use of a Shared Receive Queue (SRQ). Without SRQ, applications with hundreds of QPs must post receive Work Requests (WRs) to every individual RQ, which leads to large and fragmented buffer pools where many RQ entries remain idle. SRQ solves this inefficiency by allowing multiple QPs to share a single unified RQ. All incoming messages across those QPs draw from the same pool of posted receive buffers. This significantly reduces memory consumption and improves scalability, because the receiver only needs to maintain one shared buffer pool sized for the aggregate traffic instead of over-provisioning each connection separately.
 
 <p align="center">
-<img src="SRQ.png" width="260">
+<img src="../images/SRQ.png" width="260">
 </p>
 
 
@@ -321,7 +321,7 @@ After constructing the list of WQEs, it calls `ibv_post_srq_recv(srq_, first_wr,
 A Shared Completion Queue (SCQ) means multiple QP use the same CQ to report their work completions, instead of each QP having a dedicated CQ. The motivation is to reduce polling overhead and resource usage – a single thread can poll one CQ for completions from many QPs, rather than polling one CQ per QP. This improves scalability in applications managing numerous connections or flows. By multiplexing all completion events into one queue, SCQs allow faster detection of completed operations and simplify event handling.
 
  <p align="center">
-<img src="SCQ.png" width="200">
+<img src="../images/SCQ.png" width="200">
 </p>
 
 ### Code explaination
