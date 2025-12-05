@@ -19,9 +19,9 @@ On the client side, the program:
 The following are the actual implementations:
 
 ```
---8<-- "code/basic_read_gpu/client.c"
+--8<-- "code/basic_read_gpu/client.cpp"
 ```
 
 ```
---8<-- "code/basic_read_gpu/server.c"
+--8<-- "code/basic_read_gpu/server.cpp"
 ```
